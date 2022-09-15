@@ -154,7 +154,7 @@ if __name__ == "__main__":
 
     ## Add top X indicator
     ## MLS has 50% of teams make playoff, so let's use top 50% as comparison
-    X = 3  # 50% of 20 from other leagues
+    X = 5  # 50% of 20 from other leagues
     df_sum.loc[:, "topX"] = 0
     df_sum.loc[df_sum["rank"] <= X, "topX"] = 1
 
@@ -180,4 +180,3 @@ if __name__ == "__main__":
 
     fig = px.scatter(result, x="Gini", y="repeat_pct")
     fig.show()
-    # fig.write_image(os.path.join(BASE_DIR, "gini.png"))
