@@ -59,7 +59,9 @@ df2.reset_index(drop=True, inplace=True)
 ## Actually summarize now
 df_sum = df2.groupby(by=["Division", "Season", "team_id"], as_index=False)[
     "team_points"
-].sum()
+].mean()
+
+
 ### Ignoring ties in sorting - sake of time and I don't think it affects GINI
 df_sum.sort_values(
     by=["Division", "Season", "team_points", "team_id"],
@@ -97,29 +99,85 @@ def gini(array):
     return (np.sum((2 * index - n - 1) * array)) / (n * np.sum(array))
 
 
-## So we need to separate each season & league, and convert the points to an numpy array
-## Probably a better way but speed wins right now
-seasons = df_sum["Season"].unique()
-divisions = df_sum["Division"].unique()
-
-# Initiate results df --> each season/league is a dictionary, convert list of dictionaries to DF
-df_gini = pd.DataFrame(columns=["Division", "Season", "Gini"])
-
 # Fix int/float issue in gini
 df_sum["team_points"] = df_sum["team_points"].astype("float64")
 
-for division in divisions:
-    for season in seasons:
-        df_local = df_sum[
-            (df_sum["Season"] == season) & (df_sum["Division"] == division)
-        ].copy()
+
+if __name__ == "__main__":
+
+    ## So we need to separate each season & league, and convert the points to an numpy array
+    ## Probably a better way but speed wins right now
+    seasons = df_sum["Season"].unique()
+    divisions = df_sum["Division"].unique()
+
+    # Initiate results df --> each season/league is a dictionary, convert list of dictionaries to DF
+    df_gini = pd.DataFrame(columns=["Division", "Season", "Gini"])
+
+    for division in divisions:
+        for season in seasons:
+            df_local = df_sum[
+                (df_sum["Season"] == season) & (df_sum["Division"] == division)
+            ].copy()
+            a = df_local["team_points"].to_numpy()
+            b = gini(a)
+            df_gini.loc[len(df_gini.index)] = [division, season, b]
+
+    ### Should stop here and match to other article's results, but no time
+
+    # Now make this pretty, no time for super fancies here
+    fig = px.line(df_gini, x="Season", y="Gini", color="Division")
+    fig.show()
+    fig.write_image(os.path.join(BASE_DIR, "gini.png"))
+
+    ## Now just calculate GINI for the aggregate league during the years, not just each season
+    ## Can you even do GINI over multiple seasons? Assuming for sake of time.
+    ## Also, not worrying about 5 and 4 seasons at the moment.
+
+    df_gini_agg = pd.DataFrame(columns=["Division", "Gini"])
+
+    for division in divisions:
+        df_local = df_sum[(df_sum["Division"] == division)].copy()
         a = df_local["team_points"].to_numpy()
         b = gini(a)
-        df_gini.loc[len(df_gini.index)] = [division, season, b]
+        df_gini_agg.loc[len(df_gini_agg.index)] = [division, b]
 
-### Should stop here and match to other article's results, but no time
+    print(df_gini_agg)
 
-# Now make this pretty, no time for super fancies here
-fig = px.line(df_gini, x="Season", y="Gini", color="Division")
-fig.show()
-fig.write_image(os.path.join(BASE_DIR, "gini.png"))
+    # Consectutive success
+    ## Trying to calculate prob(success in t+1 | success in t)
+    ## So the analysis is by league (grouped by all the seasons) - what is the prob above compared to gini
+    ## And then we compare the gini vs probability to see if correlation
+
+    ## Add rank
+    ## In sorting, not dealing with ties for sake of time
+    df_sum["rank"] = df_sum.groupby(["Division", "Season"]).cumcount() + 1
+
+    ## Add top X indicator
+    ## MLS has 50% of teams make playoff, so let's use top 50% as comparison
+    X = 3  # 50% of 20 from other leagues
+    df_sum.loc[:, "topX"] = 0
+    df_sum.loc[df_sum["rank"] <= X, "topX"] = 1
+
+    ## So no need to worry about relegation here since if you were top 10 you didn't get relegated (hopefully Juve not in here?)
+    ## So start with 14 season, count how many of the topX teams made it to topX next season.
+    ## So the calculation here just becomes, for each team, look at the previous season.
+    ### Count how many times (or not) that the previous season they were topX and this season they were/were not topX
+
+    df_sum.sort_values(
+        by=["team_id", "Season", "topX"], ascending=[True, True, True], inplace=True
+    )
+    df_sum["lastTopX"] = df_sum.groupby(["team_id"])["topX"].shift(1)
+    df_sum.loc[:, "repeat"] = 0
+    df_sum.loc[(df_sum["lastTopX"] == 1) & (df_sum["topX"] == 1), "repeat"] = 1
+
+    ## So now the calc is just sum of repeat of sum topX, but only for seasons 15+
+    df_repeat = df_sum[df_sum["Season"] >= 15].copy()
+    result = df_repeat.groupby(["Division"])["topX", "repeat"].sum()
+    result.loc[:, "repeat_pct"] = result["repeat"] / result["topX"]
+
+    result = pd.merge(result, df_gini_agg, on="Division")
+    print(result)
+
+    fig = px.scatter(result, x="Gini", y="repeat_pct")
+    fig.show()
+    # fig.write_image(os.path.join(BASE_DIR, "gini.png"))
